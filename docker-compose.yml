@@ -1,0 +1,108 @@
+version: '3'
+
+services:
+
+  # Redis service configuration
+  redis:
+    image: redis:latest
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  # MySQL service configuration
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: '${DB_PASSWORD}'
+      MYSQL_DATABASE: '${DB_DATABASE}'
+      MYSQL_USER: '${DB_USERNAME}'
+      MYSQL_PASSWORD: '${DB_PASSWORD}'
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-p${DB_PASSWORD}" ]
+      retries: 3
+      timeout: 5s
+
+    # Mailhog service configuration
+  mailhog:
+    restart: unless-stopped
+    container_name: mailhog
+    build:
+      context: ./docker/config/mailhog/
+      # Dockerfile from https://github.com/mailhog/MailHog
+      dockerfile: Dockerfile
+      # image: 'mailhog/mailhog:latest'
+    ports:
+      - '${FORWARD_MAILHOG_PORT:-1025}:1025'
+      - '${FORWARD_MAILHOG_DASHBOARD_PORT:-8025}:8025'
+  
+  nginx-app1:
+    image: nginx:latest
+    container_name: app1-nginx
+    ports:
+      - "${APP1_PORT:-80}:80"
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - './app1:/var/www/html'
+      - ./docker/config/nginx/site.conf:/etc/nginx/conf.d/default.conf
+      # so we can cache our github tokens
+    links:
+      - php
+      - mailhog
+    depends_on:
+      - mysql
+    restart: unless-stopped
+
+  nginx-app2:
+    image: nginx:latest
+    container_name: app2-nginx
+    ports:
+      - "${APP2_PORT:-80}:80"
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - './app2:/var/www/html'
+      - ./docker/config/nginx/site.conf:/etc/nginx/conf.d/default.conf
+      # so we can cache our github tokens
+    links:
+      - php
+      - mailhog
+    depends_on:
+      - mysql
+    restart: unless-stopped
+
+
+  php:
+    # image: php:fpm
+    environment:
+      # XDEBUG_MODE: "debug,develop"
+      XDEBUG_MODE: "off"
+    restart: unless-stopped
+    container_name: app1-php
+    build:
+      context: ./docker/config/php/
+      dockerfile: Dockerfile
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - './app1:/var/www/html'
+      - ./docker/config/php/php.ini:/usr/local/etc/php/php.ini
+      - '~/.composer/docker-cache/:/home/phpdev/.composer:cached'
+      - '~/.config/composer/:/home/phpdev/.config/composer:cached'
+
+volumes:
+  redis-data:
+    driver: local
+  mysql-data:
+    driver: local
+
